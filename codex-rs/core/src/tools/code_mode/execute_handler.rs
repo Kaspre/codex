@@ -2,6 +2,8 @@ use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::hook_names::HookToolName;
+use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use codex_tools::ToolName;
@@ -102,6 +104,16 @@ impl ToolHandler for CodeModeExecuteHandler {
         matches!(payload, ToolPayload::Custom { .. })
     }
 
+    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
+        let ToolPayload::Custom { input } = &invocation.payload else {
+            return None;
+        };
+        Some(PreToolUsePayload {
+            tool_name: HookToolName::code_mode_exec(),
+            tool_input: serde_json::json!({ "command": input }),
+        })
+    }
+
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
         let ToolInvocation {
             session,
@@ -122,3 +134,7 @@ impl ToolHandler for CodeModeExecuteHandler {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "execute_handler_tests.rs"]
+mod tests;

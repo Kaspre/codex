@@ -43,6 +43,21 @@ impl HookToolName {
         Self::new("Bash")
     }
 
+    /// Returns the hook identity used for Code Mode JavaScript execution.
+    ///
+    /// The serialized name remains `code_mode_exec` so logs and policies can
+    /// key off the actual Codex tool — the freeform-JS execution surface,
+    /// distinct from shell tools (which serialize as `Bash`). The
+    /// model-facing tool name `exec` is accepted as a matcher alias for
+    /// compatibility with hook configurations that describe Code Mode
+    /// dispatches using the public tool name.
+    pub(crate) fn code_mode_exec() -> Self {
+        Self {
+            name: "code_mode_exec".to_string(),
+            matcher_aliases: vec!["exec".to_string()],
+        }
+    }
+
     /// Returns the canonical hook name serialized into hook stdin.
     pub(crate) fn name(&self) -> &str {
         &self.name
