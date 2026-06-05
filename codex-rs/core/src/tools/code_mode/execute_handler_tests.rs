@@ -67,3 +67,39 @@ async fn pre_tool_use_payload_returns_none_for_non_custom_payload() {
 
     assert_eq!(handler().pre_tool_use_payload(&invocation), None);
 }
+
+#[tokio::test]
+async fn with_updated_hook_input_rewrites_freeform_code_mode_input() -> anyhow::Result<()> {
+    let invocation = invocation_for_payload(ToolPayload::Custom {
+        input: sample_source().to_string(),
+    })
+    .await;
+    let rewritten_source = "text('rewritten by hook');";
+
+    let invocation =
+        handler().with_updated_hook_input(invocation, json!({ "command": rewritten_source }))?;
+
+    let ToolPayload::Custom { input } = invocation.payload else {
+        panic!("rewritten Code Mode input should remain a custom payload");
+    };
+    assert_eq!(input, rewritten_source);
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_updated_hook_input_requires_string_command() {
+    let invocation = invocation_for_payload(ToolPayload::Custom {
+        input: sample_source().to_string(),
+    })
+    .await;
+
+    let err = match handler().with_updated_hook_input(invocation, json!({ "command": 12 })) {
+        Ok(_) => panic!("non-string command should be rejected"),
+        Err(err) => err,
+    };
+
+    assert_eq!(
+        err.to_string(),
+        "hook returned updatedInput without string field `command`"
+    );
+}

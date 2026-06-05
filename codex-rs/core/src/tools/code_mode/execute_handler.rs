@@ -15,6 +15,17 @@ use super::PUBLIC_TOOL_NAME;
 use super::handle_runtime_response;
 use super::is_exec_tool_name;
 
+fn updated_hook_command(updated_input: &serde_json::Value) -> Result<&str, FunctionCallError> {
+    updated_input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "hook returned updatedInput without string field `command`".to_string(),
+            )
+        })
+}
+
 pub struct CodeModeExecuteHandler {
     spec: ToolSpec,
     nested_tool_specs: Vec<ToolSpec>,
@@ -131,6 +142,21 @@ impl CoreToolRuntime for CodeModeExecuteHandler {
             tool_name: HookToolName::code_mode_exec(),
             tool_input: serde_json::json!({ "command": input }),
         })
+    }
+
+    fn with_updated_hook_input(
+        &self,
+        mut invocation: ToolInvocation,
+        updated_input: serde_json::Value,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        let command = updated_hook_command(&updated_input)?;
+        invocation.payload = match invocation.payload {
+            ToolPayload::Custom { .. } => ToolPayload::Custom {
+                input: command.to_string(),
+            },
+            payload => payload,
+        };
+        Ok(invocation)
     }
 }
 

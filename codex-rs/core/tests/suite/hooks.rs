@@ -2825,6 +2825,150 @@ text(output.output);
 }
 
 #[tokio::test]
+async fn pre_tool_use_rewrites_code_mode_exec_before_execution() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "pretooluse-code-mode-exec-rewrite";
+    let original_source = "text('original outer code mode source');";
+    let rewritten_source = "text('rewritten outer code mode source');";
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_custom_tool_call(call_id, "exec", original_source),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "hook rewrote the outer code mode source"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let updated_input = serde_json::json!({ "command": rewritten_source });
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_pre_build_hook(move |home| {
+            if let Err(error) =
+                write_updating_pre_tool_use_hook(home, "^code_mode_exec$", &updated_input)
+            {
+                panic!("failed to write updating pre tool use hook fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::CodeMode);
+            trust_discovered_hooks(config);
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_permission_profile(
+        "run the rewritten code mode source",
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].custom_tool_call_output(call_id);
+    let output_text = output_item
+        .get("output")
+        .map(Value::to_string)
+        .unwrap_or_default();
+    assert!(
+        output_text.contains("rewritten outer code mode source"),
+        "rewritten Code Mode source should execute: {output_text}"
+    );
+    assert!(
+        !output_text.contains("original outer code mode source"),
+        "original Code Mode source should not execute after rewrite: {output_text}"
+    );
+
+    let hook_inputs = read_pre_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["tool_name"], "code_mode_exec");
+    assert_eq!(hook_inputs[0]["tool_use_id"], call_id);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], original_source);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn pre_tool_use_rejects_invalid_code_mode_exec_updated_input_before_execution() -> Result<()>
+{
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "pretooluse-code-mode-exec-invalid-rewrite";
+    let original_source = "text('invalid updated input should not execute');";
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_custom_tool_call(call_id, "exec", original_source),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "invalid code mode rewrite rejected"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let updated_input = serde_json::json!({ "command": 12 });
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_pre_build_hook(move |home| {
+            if let Err(error) =
+                write_updating_pre_tool_use_hook(home, "^code_mode_exec$", &updated_input)
+            {
+                panic!("failed to write updating pre tool use hook fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::CodeMode);
+            trust_discovered_hooks(config);
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_permission_profile(
+        "reject the invalid code mode rewrite",
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].custom_tool_call_output(call_id);
+    let output_text = output_item
+        .get("output")
+        .map(Value::to_string)
+        .unwrap_or_default();
+    assert!(
+        output_text.contains("hook returned updatedInput without string field `command`"),
+        "invalid updated input should report the rewrite error: {output_text}"
+    );
+    assert!(
+        !output_text.contains("invalid updated input should not execute"),
+        "original Code Mode source should not execute after invalid rewrite: {output_text}"
+    );
+
+    let hook_inputs = read_pre_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["tool_name"], "code_mode_exec");
+    assert_eq!(hook_inputs[0]["tool_use_id"], call_id);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], original_source);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn plugin_pre_tool_use_blocks_shell_command_before_execution() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
